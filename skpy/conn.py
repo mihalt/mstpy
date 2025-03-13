@@ -42,13 +42,15 @@ class SkypeConnection(SkypeObj):
             Whether the connected account only has guest privileges.
     """
 
-    Auth = SkypeEnum("SkypeConnection.Auth", ("SkypeToken", "Authorize", "RegToken"))
+    Auth = SkypeEnum("SkypeConnection.Auth", ("SkypeToken", "Authenticate", "Authorize", "RegToken"))
     """
     :class:`.SkypeEnum`: Authentication types for different API calls.
 
     Attributes:
         Auth.SkypeToken:
             Add an ``X-SkypeToken`` header with the Skype token.
+        Auth.Authenticate:
+            Add an ``Authentication`` header with the Skype token, along with client information.
         Auth.Authorize:
             Add an ``Authorization`` header with the Skype token.
         Auth.RegToken:
@@ -141,7 +143,7 @@ class SkypeConnection(SkypeObj):
     API_ASM_LOCAL = "https://{0}1-api.asm.skype.com/v1/objects"
     API_URL = "https://urlp.asm.skype.com/v1/url/info"
     API_CONTACTS = "https://contacts.skype.com/contacts/v2"
-    API_MSGSHOST = "https://client-s.gateway.messenger.live.com/v1"
+    API_MSGSHOST = "https://msgapi.teams.live.com/v1"
     API_DIRECTORY = "https://skypegraph.skype.com/v2.0/search/"
     # Version doesn't seem to be important, at least not for what we need.
     API_CONFIG = "https://a.config.skype.com/config/v1"
@@ -150,6 +152,8 @@ class SkypeConnection(SkypeObj):
     USER_AGENT_BROWSER = ("Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "
                           "Chrome/33.0.1750.117 Safari/537.36")
     SKYPE_CLIENT = "1418/9.99.0.999"
+    CLIENT_INFO = ("os=Windows; osVer=10; proc=x86; lcid=en-US; deviceType=1; country=US; "
+                   "clientName=skype4life; clientVer={0}//skype4life").format(SKYPE_CLIENT)
 
     attrs = ("userId", "tokenFile", "connected", "guest")
 
@@ -227,6 +231,11 @@ class SkypeConnection(SkypeObj):
         if auth == self.Auth.SkypeToken:
             headers["X-SkypeToken"] = self.tokens["skype"]
             debugHeaders["X-SkypeToken"] = "***"
+        elif auth == self.Auth.Authenticate:
+            headers.update({"Authentication": "skypetoken={0}".format(self.tokens["skype"]),
+                            "BehaviorOverride": "redirectAs404", "ClientInfo": SkypeConnection.CLIENT_INFO})
+            debugHeaders.update({"Authenticate": "***", "BehaviorOverride": headers["BehaviorOverride"],
+                                 "ClientInfo": headers["ClientInfo"]})
         elif auth == self.Auth.Authorize:
             headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
             debugHeaders["Authorization"] = "***"
@@ -522,9 +531,7 @@ class SkypeConnection(SkypeObj):
         self.tokenExpiry["reg"] = expiry
         self.msgsHost = msgsHost
         if endpoint:
-            endpoint.config()
             self.endpoints["main"] = endpoint
-        self.syncEndpoints()
         if self.tokenFile:
             self.writeToken()
 
@@ -945,12 +952,8 @@ class SkypeRegistrationTokenProvider(SkypeAuthProvider):
         token = expiry = endpoint = None
         msgsHost = SkypeConnection.API_MSGSHOST
         while not token:
-            secs = int(time.time())
-            hash = self.getMac256Hash(str(secs))
-            headers = {"LockAndKey": "appId=msmsgs@msnmsgr.com; time={0}; lockAndKeyResponse={1}".format(secs, hash),
-                       "Authentication": "skypetoken=" + skypeToken, "BehaviorOverride": "redirectAs404"}
             endpointResp = self.conn("POST", "{0}/users/ME/endpoints".format(msgsHost), codes=(200, 201, 404),
-                                     headers=headers, json={"endpointFeatures": "Agent"})
+                                     auth=SkypeConnection.Auth.Authenticate, json={"endpointFeatures": "Agent"})
             regTokenHead = endpointResp.headers.get("Set-RegistrationToken")
             locHead = endpointResp.headers.get("Location")
             if locHead:
