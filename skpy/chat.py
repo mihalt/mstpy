@@ -8,6 +8,9 @@ from .conn import SkypeConnection
 from .msg import SkypeMsg
 
 
+COMBINED_AUTH = (SkypeConnection.Auth.Authenticate, SkypeConnection.Auth.RegToken)
+
+
 @SkypeUtils.initAttrs
 class SkypeChat(SkypeObj):
     """
@@ -36,8 +39,7 @@ class SkypeChat(SkypeObj):
             active = True
             try:
                 info = skype.conn("GET", "{0}/threads/{1}".format(skype.conn.msgsHost, raw.get("id")),
-                                  auth=SkypeConnection.Auth.Authenticate,
-                                  params={"view": "msnp24Equivalent"}).json()
+                                  auth=COMBINED_AUTH, params={"view": "msnp24Equivalent"}).json()
             except SkypeApiException as e:
                 if e.args[1].status_code in (400, 403, 404):
                     active = False
@@ -67,15 +69,14 @@ class SkypeChat(SkypeObj):
         headers = {"Sec-Fetch-Dest": "empty",
                    "Sec-Fetch-Mode": "cors",
                    "Sec-Fetch-Site": "cross-site"}
-        resp = self.skype.conn.syncStateCall("GET", url, params, auth=SkypeConnection.Auth.Authenticate, headers=headers).json()
+        resp = self.skype.conn.syncStateCall("GET", url, params, auth=COMBINED_AUTH, headers=headers).json()
         return [SkypeMsg.fromRaw(self.skype, json) for json in resp.get("messages", [])]
 
     def createRaw(self, msg):
         # All fields except timezone are required; 1418 = desktop client.
         resp = self.skype.conn("POST", "{0}/users/ME/conversations/{1}/messages"
                                        .format(self.skype.conn.msgsHost, self.id),
-                               auth=SkypeConnection.Auth.Authenticate,
-                               headers={"ClientInfo": SkypeConnection.CLIENT_INFO}, json=msg)
+                               auth=COMBINED_AUTH, headers={"ClientInfo": SkypeConnection.CLIENT_INFO}, json=msg)
         url = resp.headers.get("Location")
         msgId = url.rsplit("/", 1)[-1] if url else None
         arriveTime = resp.json().get("OriginalArrivalTime")
@@ -83,8 +84,7 @@ class SkypeChat(SkypeObj):
 
     def editRaw(self, msgId, msg):
         resp = self.skype.conn("PUT", "{0}/users/ME/conversations/{1}/messages/{2}"
-                                      .format(self.skype.conn.msgsHost, self.id, msgId),
-                               auth=SkypeConnection.Auth.Authenticate, json=msg)
+                                      .format(self.skype.conn.msgsHost, self.id, msgId), auth=COMBINED_AUTH, json=msg)
         json = resp.json()
         if "errorCode" in json:
             raise SkypeApiException("Error code {0} from message edit".format(json["errorCode"]), resp)
@@ -93,8 +93,7 @@ class SkypeChat(SkypeObj):
 
     def deleteRaw(self, msgId):
         resp = self.skype.conn("DELETE", "{0}/users/ME/conversations/{1}/messages/{2}"
-                                         .format(self.skype.conn.msgsHost, self.id, msgId),
-                               auth=SkypeConnection.Auth.Authenticate)
+                                         .format(self.skype.conn.msgsHost, self.id, msgId), auth=COMBINED_AUTH)
         json = resp.json()
         if "errorCode" in json:
             raise SkypeApiException("Error code {0} from message delete".format(json["errorCode"]), resp)
@@ -265,8 +264,7 @@ class SkypeChat(SkypeObj):
             horizon (str): new horizon string, of the form ``<id>,<timestamp>,<id>``
         """
         self.skype.conn("PUT", "{0}/users/ME/conversations/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "consumptionhorizon"},
-                        json={"consumptionhorizon": horizon})
+                        auth=COMBINED_AUTH, params={"name": "consumptionhorizon"}, json={"consumptionhorizon": horizon})
 
     def setAlerts(self, alerts):
         """
@@ -276,8 +274,7 @@ class SkypeChat(SkypeObj):
             alerts (bool): whether to receive notifications
         """
         self.skype.conn("PUT", "{0}/users/ME/conversations/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "alerts"},
-                        json={"alerts": str(alerts).lower()})
+                        auth=COMBINED_AUTH, params={"name": "alerts"}, json={"alerts": str(alerts).lower()})
         self.alerts = alerts
 
     def delete(self):
@@ -285,7 +282,7 @@ class SkypeChat(SkypeObj):
         Delete the conversation and all message history.
         """
         self.skype.conn("DELETE", "{0}/users/ME/conversations/{1}/messages".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate)
+                        auth=COMBINED_AUTH)
 
 
 @SkypeUtils.initAttrs
@@ -383,7 +380,7 @@ class SkypeGroupChat(SkypeChat):
             topic (str): new conversation topic
         """
         self.skype.conn("PUT", "{0}/threads/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "topic"}, json={"topic": topic})
+                        auth=COMBINED_AUTH, params={"name": "topic"}, json={"topic": topic})
         self.topic = topic
 
     def setModerated(self, moderated=True):
@@ -394,8 +391,7 @@ class SkypeGroupChat(SkypeChat):
             moderated (bool): whether to enable moderation restrictions
         """
         self.skype.conn("PUT", "{0}/threads/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "moderatedthread"},
-                        json={"moderatedthread": moderated})
+                        auth=COMBINED_AUTH, params={"name": "moderatedthread"}, json={"moderatedthread": moderated})
         self.moderated = moderated
 
     def setOpen(self, open):
@@ -406,8 +402,7 @@ class SkypeGroupChat(SkypeChat):
             open (bool): whether to accept new participants via a public join link
         """
         self.skype.conn("PUT", "{0}/threads/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "joiningenabled"},
-                        json={"joiningenabled": open})
+                        auth=COMBINED_AUTH, params={"name": "joiningenabled"}, json={"joiningenabled": open})
         self.open = open
 
     def setHistory(self, history):
@@ -420,8 +415,7 @@ class SkypeGroupChat(SkypeChat):
             history (bool): whether to provide message history to new participants
         """
         self.skype.conn("PUT", "{0}/threads/{1}/properties".format(self.skype.conn.msgsHost, self.id),
-                        auth=SkypeConnection.Auth.Authenticate, params={"name": "historydisclosed"},
-                        json={"historydisclosed": history})
+                        auth=COMBINED_AUTH, params={"name": "historydisclosed"}, json={"historydisclosed": history})
         self.history = history
 
     def addMember(self, id, admin=False):
@@ -433,7 +427,7 @@ class SkypeGroupChat(SkypeChat):
             admin (bool): whether the user will gain admin privileges
         """
         self.skype.conn("PUT", "{0}/threads/{1}/members/8:{2}".format(self.skype.conn.msgsHost, self.id, id),
-                        auth=SkypeConnection.Auth.Authenticate, json={"role": "Admin" if admin else "User"})
+                        auth=COMBINED_AUTH, json={"role": "Admin" if admin else "User"})
         if id not in self.userIds:
             self.userIds.append(id)
         if admin and id not in self.adminIds:
@@ -449,7 +443,7 @@ class SkypeGroupChat(SkypeChat):
             id (str): user identifier to remove
         """
         self.skype.conn("DELETE", "{0}/threads/{1}/members/8:{2}".format(self.skype.conn.msgsHost, self.id, id),
-                        auth=SkypeConnection.Auth.Authenticate)
+                        auth=COMBINED_AUTH)
         if id in self.userIds:
             self.userIds.remove(id)
 
@@ -486,7 +480,7 @@ class SkypeChats(SkypeObjs):
         """
         url = "{0}/users/ME/conversations".format(self.skype.conn.msgsHost)
         params = {"view": "supportsExtendedHistory|msnp24Equivalent", "pageSize": 100}
-        resp = self.skype.conn.syncStateCall("GET", url, params, auth=SkypeConnection.Auth.Authenticate).json()
+        resp = self.skype.conn.syncStateCall("GET", url, params, auth=COMBINED_AUTH).json()
         chats = {}
         for json in resp.get("conversations", []):
             chat = SkypeChat.fromRaw(self.skype, json)
@@ -504,7 +498,7 @@ class SkypeChats(SkypeObjs):
             :class:`SkypeChat`: retrieved conversation
         """
         json = self.skype.conn("GET", "{0}/users/ME/conversations/{1}".format(self.skype.conn.msgsHost, id),
-                               auth=SkypeConnection.Auth.Authenticate, params={"view": "msnp24Equivalent"}).json()
+                               auth=COMBINED_AUTH, params={"view": "msnp24Equivalent"}).json()
         return self.merge(SkypeChat.fromRaw(self.skype, json))
 
     def create(self, members=(), admins=(), moderated=False):
@@ -529,7 +523,7 @@ class SkypeChats(SkypeObjs):
                 continue
             memberObjs.append({"id": "8:{0}".format(id), "role": "Admin" if id in admins else "User"})
         resp = self.skype.conn("POST", "{0}/threads".format(self.skype.conn.msgsHost),
-                               auth=SkypeConnection.Auth.Authenticate, json={"members": memberObjs, "properties": props})
+                               auth=COMBINED_AUTH, json={"members": memberObjs, "properties": props})
         return self.chat(resp.headers["Location"].rsplit("/", 1)[1])
 
     @staticmethod

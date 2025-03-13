@@ -213,7 +213,7 @@ class SkypeConnection(SkypeObj):
             method (str): HTTP request method
             url (str): full URL to connect to
             codes (int list): expected HTTP response codes for success
-            auth (Auth): authentication type to be included
+            auth (Auth or Auth set): authentication type(s) to be included
             headers (dict): additional headers to be included
             kwargs (dict): any extra parameters to pass to :func:`requests.request`
 
@@ -227,22 +227,30 @@ class SkypeConnection(SkypeObj):
         self.verifyToken(auth)
         if not headers:
             headers = {}
-        debugHeaders = dict(headers)
-        if auth == self.Auth.SkypeToken:
+        if not auth:
+            auth = set()
+        elif auth in self.Auth:
+            auth = set([auth])
+        else:
+            auth = set(auth)
+        obscure = set()
+        if self.Auth.SkypeToken in auth:
             headers["X-SkypeToken"] = self.tokens["skype"]
-            debugHeaders["X-SkypeToken"] = "***"
-        elif auth == self.Auth.Authenticate:
+            obscure.add("X-SkypeToken")
+        if self.Auth.Authenticate in auth:
             headers.update({"Authentication": "skypetoken={0}".format(self.tokens["skype"]),
                             "BehaviorOverride": "redirectAs404", "ClientInfo": SkypeConnection.CLIENT_INFO})
-            debugHeaders.update({"Authenticate": "***", "BehaviorOverride": headers["BehaviorOverride"],
-                                 "ClientInfo": headers["ClientInfo"]})
-        elif auth == self.Auth.Authorize:
+            obscure.add("Authentication")
+        if self.Auth.Authorize in auth:
             headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
-            debugHeaders["Authorization"] = "***"
-        elif auth == self.Auth.RegToken:
+            obscure.add("Authorization")
+        if self.Auth.RegToken in auth:
             headers["RegistrationToken"] = self.tokens["reg"]
-            debugHeaders["RegistrationToken"] = "***"
+            obscure.add("RegistrationToken")
         if os.getenv("SKPY_DEBUG_HTTP"):
+            debugHeaders = dict(headers)
+            for name in obscure:
+                debugHeaders[name] = "***"
             print("<= [{0}] {1} {2}".format(datetime.now().strftime("%d/%m %H:%M:%S"), method, url))
             print(pformat(dict(kwargs, headers=debugHeaders)))
         resp = self.sess.request(method, url, headers=headers, **kwargs)
