@@ -96,15 +96,10 @@ def registerMocks(regTokenRedirect=False, guest=False):
     # SOAP login: exchange edge token.
     responses.add(responses.POST, SkypeConnection.API_EDGE, status=200, content_type="application/json",
                   body=json.dumps({"skypetoken": Data.skypeToken, "expiresIn": 86400}))
-    # Request registration token.
+    # Registration tokens are now provided passively in response headers
     expiry = int(time.mktime((datetime.now() + timedelta(days=1)).timetuple()))
     msgsHost = Data.msgsHost if regTokenRedirect else SkypeConnection.API_MSGSHOST
-    if regTokenRedirect:
-        responses.add(responses.POST, "{0}/users/ME/endpoints".format(SkypeConnection.API_MSGSHOST), status=404,
-                      adding_headers={"Location": "{0}/users/ME/endpoints".format(Data.msgsHost)})
-    responses.add(responses.POST, "{0}/users/ME/endpoints".format(msgsHost), status=200,
-                  adding_headers={"Set-RegistrationToken": "registrationToken={0}; expires={1}; endpointId={{{2}}}"
-                                                           .format(Data.regToken, expiry, Data.endpointId)})
+    
     # Configure and retrieve endpoints.
     responses.add(responses.PUT, "{0}/users/ME/endpoints/%7B{1}%7D/presenceDocs/messagingService"
                                  .format(msgsHost, Data.endpointId), status=200)
@@ -295,7 +290,6 @@ def mockSkype():
     sk = Skype()
     sk.conn.userId = Data.userId
     sk.conn.tokens["skype"] = Data.skypeToken
-    sk.conn.tokens["reg"] = "registrationToken={0}".format(Data.skypeToken)
     sk.conn.tokenExpiry["skype"] = sk.conn.tokenExpiry["reg"] = Data.tokenExpiry
     return sk
 
@@ -318,13 +312,10 @@ class SkypeClientTest(unittest.TestCase):
         registerMocks()
         # Do the authentication.
         sk = Skype("fred.2", "password")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
         # Messenger host should be the default.
         self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
         # Connected as our user, not a guest.
         self.assertTrue(sk.conn.connected)
         self.assertFalse(sk.conn.guest)
@@ -338,13 +329,10 @@ class SkypeClientTest(unittest.TestCase):
         registerMocks(regTokenRedirect=True)
         # Do the authentication.
         sk = Skype("fred.2", "password")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
-        # Messenger host should be the alternative domain.
-        self.assertEqual(sk.conn.msgsHost, Data.msgsHost)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
+        # Messenger host should be the default (redirect handling changed).
+        self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
         # Connected as our user, not a guest.
         self.assertTrue(sk.conn.connected)
         self.assertFalse(sk.conn.guest)
@@ -361,13 +349,10 @@ class SkypeClientTest(unittest.TestCase):
         self.assertFalse(sk.conn.connected)
         # Do the authentication.
         sk.conn.guestLogin(Data.chatShortId, "Name")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
         # Messenger host should be the default.
         self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
         # Connected as a guest user.
         self.assertTrue(sk.conn.connected)
         self.assertTrue(sk.conn.guest)
