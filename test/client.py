@@ -157,6 +157,8 @@ def registerMocks(regTokenRedirect=False, guest=False):
     chatFmt = (SkypeConnection.API_MSGSHOST, Data.chatThreadId)
     responses.add(responses.GET, "{0}/users/ME/conversations".format(SkypeConnection.API_MSGSHOST),
                   status=200, content_type="application/json",
+                  adding_headers={"Set-RegistrationToken": "registrationToken={0}; expires={1}"
+                                                           .format(Data.regToken, expiry)},
                   json={"conversations": [{"id": "8:{0}".format(Data.contactId),
                                            "lastMessage": {"clientmessageid": Data.msgId,
                                                            "composetime": Data.msgTimeFmt,
@@ -477,6 +479,43 @@ class SkypeClientTest(unittest.TestCase):
         self.assertEqual(SkypeUtils.chatToId("{0}/conversations/{1}".format(Data.msgsHost, Data.chatP2PThreadId)),
                          Data.chatP2PThreadId)
 
+    @responses.activate
+    def testPassiveRegistrationTokenExtraction(self):
+        """
+        Test that registration tokens are extracted from Set-RegistrationToken headers in any response.
+        """
+        sk = mockSkype()
+        # Clear existing registration token
+        sk.conn.tokens.pop("reg", None)
+        sk.conn.tokenExpiry.pop("reg", None)
+        
+        # Make a request that should extract the token
+        sk.chats.recent()
+        
+        # Verify token was extracted
+        self.assertEqual(sk.conn.tokens["reg"], Data.regToken)
+        self.assertTrue("reg" in sk.conn.tokenExpiry)
+
+    @responses.activate
+    def testRequiredHeaders(self):
+        """
+        Test that required ms-ic3 headers are included in all requests.
+        """
+        sk = mockSkype()
+        
+        # Intercept the actual request to verify headers
+        def request_callback(request):
+            headers = request.headers
+            self.assertIn('ms-ic3-additional-product', headers)
+            self.assertEqual(headers['ms-ic3-additional-product'], 'Sfl')
+            self.assertIn('ms-ic3-product', headers)
+            self.assertEqual(headers['ms-ic3-product'], 'tfl')
+            return (200, {}, json.dumps({"conversations": []}))
+        
+        responses.add_callback(responses.GET, "{0}/users/ME/conversations".format(SkypeConnection.API_MSGSHOST),
+                              callback=request_callback, content_type="application/json")
+        
+        sk.chats.recent()
 
 if __name__ == "__main__":
     unittest.main()
