@@ -248,6 +248,10 @@ class SkypeConnection(SkypeObj):
             print("<= [{0}] {1} {2}".format(datetime.now().strftime("%d/%m %H:%M:%S"), method, url))
             print(pformat(dict(kwargs, headers=debugHeaders)))
         resp = self.sess.request(method, url, headers=headers, **kwargs)
+        
+        # Extract registration token from response headers if present
+        self._extractRegistrationToken(resp)
+        
         if os.getenv("SKPY_DEBUG_HTTP"):
             print("=> [{0}] {1}".format(datetime.now().strftime("%d/%m %H:%M:%S"), resp.status_code))
             print(pformat(dict(resp.headers)))
@@ -260,6 +264,30 @@ class SkypeConnection(SkypeObj):
                 raise SkypeRateLimitException("Rate limit exceeded", resp)
             raise SkypeApiException("{0} response from {1} {2}".format(resp.status_code, method, url), resp)
         return resp
+
+    def _extractRegistrationToken(self, resp):
+        """
+        Extract registration token from response headers if present.
+        
+        Args:
+            resp (requests.Response): HTTP response to check for registration token
+        """
+        regTokenHead = resp.headers.get("Set-RegistrationToken")
+        if regTokenHead:
+            import re
+            tokenMatch = re.search(r"registrationToken=([a-z0-9\+/=]+)", regTokenHead, re.I)
+            expiryMatch = re.search(r"expires=(\d+)", regTokenHead)
+            if tokenMatch:
+                self.tokens["reg"] = tokenMatch.group(1)
+                if expiryMatch:
+                    self.tokenExpiry["reg"] = datetime.fromtimestamp(int(expiryMatch.group(1)))
+                else:
+                    # Default expiry if not specified (24 hours from now)
+                    self.tokenExpiry["reg"] = datetime.now() + timedelta(hours=24)
+                
+                # Update token file if configured
+                if self.tokenFile and "skype" in self.tokens:
+                    self.writeToken()
 
     def syncStateCall(self, method, url, params={}, **kwargs):
         """
@@ -923,12 +951,16 @@ class SkypeRefreshAuthProvider(SkypeAuthProvider):
 
 class SkypeRegistrationTokenProvider(SkypeAuthProvider):
     """
-    An authentication provider that handles the handshake for a registration token.
+    DEPRECATED: This class is no longer used for active token requests.
+    Registration tokens are now obtained passively from Set-RegistrationToken headers.
+    
+    Kept for backward compatibility but should not be used directly.
     """
 
     def auth(self, skypeToken):
         """
-        Request a new registration token using a current Skype token.
+        DEPRECATED: This method is no longer used.
+        Registration tokens are now extracted automatically from server responses.
 
         Args:
             skypeToken (str): existing Skype token
