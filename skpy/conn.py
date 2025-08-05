@@ -138,7 +138,7 @@ class SkypeConnection(SkypeObj):
     API_ASM_LOCAL = "https://{0}1-api.asm.skype.com/v1/objects"
     API_URL = "https://urlp.asm.skype.com/v1/url/info"
     API_CONTACTS = "https://contacts.skype.com/contacts/v2"
-    API_MSGSHOST = "https://client-s.gateway.messenger.live.com/v1"
+    API_MSGSHOST = "https://teams.live.com/api/chatsvc/consumer/v1"
     API_DIRECTORY = "https://skypegraph.skype.com/v2.0/search/"
     # Version doesn't seem to be important, at least not for what we need.
     API_CONFIG = "https://a.config.skype.com/config/v1"
