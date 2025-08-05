@@ -113,6 +113,14 @@ def registerMocks(regTokenRedirect=False, guest=False):
     responses.add(responses.POST, "{0}/api/v2/conversation/".format(SkypeConnection.API_JOIN),
                   status=200, content_type="application/json",
                   json={"Long": Data.chatLongId, "Resource": Data.chatThreadId})
+    # Guest auth: get meeting information.
+    responses.add(responses.GET, "{0}/meetings/{1}".format(SkypeConnection.API_JOIN_CREATE, Data.chatShortId),
+                  status=200, content_type="application/json",
+                  json={"threadId": Data.chatThreadId})
+    # Guest auth: join the conversation.
+    responses.add(responses.POST, "{0}/threads/{1}/members".format(SkypeConnection.API_JOIN_CREATE, Data.chatThreadId),
+                  status=200, content_type="application/json",
+                  json={"skypetoken": Data.skypeToken})
     # Join a conversation as a guest.
     responses.add(responses.POST, "{0}/api/v1/users/guests".format(SkypeConnection.API_JOIN),
                   status=200, content_type="application/json", json={"skypetoken": Data.skypeToken})
