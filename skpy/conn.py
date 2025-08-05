@@ -152,6 +152,8 @@ class SkypeConnection(SkypeObj):
 
     extSess = requests.Session()
     extSess.headers["User-Agent"] = USER_AGENT
+    extSess.headers["ms-ic3-additional-product"] = "Sfl"
+    extSess.headers["ms-ic3-product"] = "tfl"
 
     def __init__(self):
         """
@@ -165,6 +167,8 @@ class SkypeConnection(SkypeObj):
         self.msgsHost = self.API_MSGSHOST
         self.sess = requests.Session()
         self.sess.headers["User-Agent"] = self.USER_AGENT
+        self.sess.headers["ms-ic3-additional-product"] = "Sfl"
+        self.sess.headers["ms-ic3-product"] = "tfl"
         self.endpoints = {"self": SkypeEndpoint(self, "SELF")}
         self.syncStates = {}
 
@@ -220,15 +224,26 @@ class SkypeConnection(SkypeObj):
         if not headers:
             headers = {}
         debugHeaders = dict(headers)
-        if auth == self.Auth.SkypeToken:
+        headers["x-ms-client-consumer-type"] = "teams4life"
+        headers["ms-ic3-additional-product"] = "Sfl"
+        headers["ms-ic3-product"] = "tfl"
+        
+        # Always include Skype token when available
+        if self.tokens.get("skype"):
             headers["X-SkypeToken"] = self.tokens["skype"]
+            headers["Authentication"] = "skypetoken=" + self.tokens["skype"]
             debugHeaders["X-SkypeToken"] = "***"
-        elif auth == self.Auth.Authorize:
-            headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
-            debugHeaders["Authorization"] = "***"
-        elif auth == self.Auth.RegToken:
+            debugHeaders["Authentication"] = "***"
+        
+        # Always include registration token when available
+        if self.tokens.get("reg"):
             headers["RegistrationToken"] = self.tokens["reg"]
             debugHeaders["RegistrationToken"] = "***"
+        
+        if auth == self.Auth.Authorize:
+            headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
+            debugHeaders["Authorization"] = "***"
+
         if os.getenv("SKPY_DEBUG_HTTP"):
             print("<= [{0}] {1} {2}".format(datetime.now().strftime("%d/%m %H:%M:%S"), method, url))
             print(pformat(dict(kwargs, headers=debugHeaders)))
