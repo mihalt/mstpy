@@ -95,7 +95,6 @@ class Skype(SkypeObj):
         """
         self.conn.endpoints["self"].subscribePresence(self.contacts)
 
-    @SkypeConnection.handle(404, regToken=True)
     @SkypeConnection.handle(404, subscribe="self")
     def getEvents(self):
         """
