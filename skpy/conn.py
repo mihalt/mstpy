@@ -62,12 +62,11 @@ class SkypeConnection(SkypeObj):
 
         Args:
             codes (int list): status codes to respond to
-            regToken (bool): whether to try retrieving a new token on error
+            subscribe (str): endpoint to subscribe if needed
 
         Returns:
             method: decorator function, ready to apply to other methods
         """
-        regToken = kwargs.get("regToken", False)
         subscribe = kwargs.get("subscribe")
 
         def decorator(fn):
@@ -78,8 +77,6 @@ class SkypeConnection(SkypeObj):
                 except SkypeApiException as e:
                     if isinstance(e.args[1], requests.Response) and e.args[1].status_code in codes:
                         conn = self if isinstance(self, SkypeConnection) else self.conn
-                        if regToken:
-                            conn.getRegToken()
                         if subscribe:
                             conn.endpoints[subscribe].subscribe()
                         return fn(self, *args, **kwargs)
@@ -141,7 +138,7 @@ class SkypeConnection(SkypeObj):
     API_ASM_LOCAL = "https://{0}1-api.asm.skype.com/v1/objects"
     API_URL = "https://urlp.asm.skype.com/v1/url/info"
     API_CONTACTS = "https://contacts.skype.com/contacts/v2"
-    API_MSGSHOST = "https://client-s.gateway.messenger.live.com/v1"
+    API_MSGSHOST = "https://teams.live.com/api/chatsvc/consumer/v1"
     API_DIRECTORY = "https://skypegraph.skype.com/v2.0/search/"
     # Version doesn't seem to be important, at least not for what we need.
     API_CONFIG = "https://a.config.skype.com/config/v1"
@@ -155,6 +152,8 @@ class SkypeConnection(SkypeObj):
 
     extSess = requests.Session()
     extSess.headers["User-Agent"] = USER_AGENT
+    extSess.headers["ms-ic3-additional-product"] = "Sfl"
+    extSess.headers["ms-ic3-product"] = "tfl"
 
     def __init__(self):
         """
@@ -168,13 +167,14 @@ class SkypeConnection(SkypeObj):
         self.msgsHost = self.API_MSGSHOST
         self.sess = requests.Session()
         self.sess.headers["User-Agent"] = self.USER_AGENT
+        self.sess.headers["ms-ic3-additional-product"] = "Sfl"
+        self.sess.headers["ms-ic3-product"] = "tfl"
         self.endpoints = {"self": SkypeEndpoint(self, "SELF")}
         self.syncStates = {}
 
     @property
     def connected(self):
-        return "skype" in self.tokenExpiry and datetime.now() <= self.tokenExpiry["skype"] \
-               and "reg" in self.tokenExpiry and datetime.now() <= self.tokenExpiry["reg"]
+        return "skype" in self.tokenExpiry and datetime.now() <= self.tokenExpiry["skype"]
 
     @property
     def guest(self):
@@ -224,19 +224,34 @@ class SkypeConnection(SkypeObj):
         if not headers:
             headers = {}
         debugHeaders = dict(headers)
-        if auth == self.Auth.SkypeToken:
+        headers["x-ms-client-consumer-type"] = "teams4life"
+        headers["ms-ic3-additional-product"] = "Sfl"
+        headers["ms-ic3-product"] = "tfl"
+        
+        # Always include Skype token when available
+        if self.tokens.get("skype"):
             headers["X-SkypeToken"] = self.tokens["skype"]
+            headers["Authentication"] = "skypetoken=" + self.tokens["skype"]
             debugHeaders["X-SkypeToken"] = "***"
-        elif auth == self.Auth.Authorize:
-            headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
-            debugHeaders["Authorization"] = "***"
-        elif auth == self.Auth.RegToken:
+            debugHeaders["Authentication"] = "***"
+        
+        # Always include registration token when available
+        if self.tokens.get("reg"):
             headers["RegistrationToken"] = self.tokens["reg"]
             debugHeaders["RegistrationToken"] = "***"
+        
+        if auth == self.Auth.Authorize:
+            headers["Authorization"] = "skype_token {0}".format(self.tokens["skype"])
+            debugHeaders["Authorization"] = "***"
+
         if os.getenv("SKPY_DEBUG_HTTP"):
             print("<= [{0}] {1} {2}".format(datetime.now().strftime("%d/%m %H:%M:%S"), method, url))
             print(pformat(dict(kwargs, headers=debugHeaders)))
         resp = self.sess.request(method, url, headers=headers, **kwargs)
+        
+        # Extract registration token from response headers if present
+        self._extractRegistrationToken(resp)
+        
         if os.getenv("SKPY_DEBUG_HTTP"):
             print("=> [{0}] {1}".format(datetime.now().strftime("%d/%m %H:%M:%S"), resp.status_code))
             print(pformat(dict(resp.headers)))
@@ -249,6 +264,30 @@ class SkypeConnection(SkypeObj):
                 raise SkypeRateLimitException("Rate limit exceeded", resp)
             raise SkypeApiException("{0} response from {1} {2}".format(resp.status_code, method, url), resp)
         return resp
+
+    def _extractRegistrationToken(self, resp):
+        """
+        Extract registration token from response headers if present.
+        
+        Args:
+            resp (requests.Response): HTTP response to check for registration token
+        """
+        regTokenHead = resp.headers.get("Set-RegistrationToken")
+        if regTokenHead:
+            import re
+            tokenMatch = re.search(r"registrationToken=([a-z0-9\+/=]+)", regTokenHead, re.I)
+            expiryMatch = re.search(r"expires=(\d+)", regTokenHead)
+            if tokenMatch:
+                self.tokens["reg"] = tokenMatch.group(1)
+                if expiryMatch:
+                    self.tokenExpiry["reg"] = datetime.fromtimestamp(int(expiryMatch.group(1)))
+                else:
+                    # Default expiry if not specified (24 hours from now)
+                    self.tokenExpiry["reg"] = datetime.now() + timedelta(hours=24)
+                
+                # Update token file if configured
+                if self.tokenFile and "skype" in self.tokens:
+                    self.writeToken()
 
     def syncStateCall(self, method, url, params={}, **kwargs):
         """
@@ -321,8 +360,6 @@ class SkypeConnection(SkypeObj):
             self.tokens["reg"] = regToken
             self.tokenExpiry["reg"] = regExpiry
             self.msgsHost = msgsHost
-        else:
-            self.getRegToken()
 
     def readToken(self):
         """
@@ -351,12 +388,18 @@ class SkypeConnection(SkypeObj):
         Returns:
             str: A token string that can be used by :meth:`readTokenFromStr` to re-authenticate.
         """
+        # Use empty string and 0 expiry if registration token is not available yet
+        regToken = self.tokens.get("reg", "")
+        regExpiry = ""
+        if "reg" in self.tokenExpiry:
+            regExpiry = str(int(time.mktime(self.tokenExpiry["reg"].timetuple())))
+            
         return "\n".join([
             self.userId,
             self.tokens["skype"],
             str(int(time.mktime(self.tokenExpiry["skype"].timetuple()))),
-            self.tokens["reg"],
-            str(int(time.mktime(self.tokenExpiry["reg"].timetuple()))),
+            regToken,
+            regExpiry,
             self.msgsHost
         ]) + "\n"
 
@@ -387,9 +430,6 @@ class SkypeConnection(SkypeObj):
                 if not hasattr(self, "getSkypeToken"):
                     raise SkypeTokenException("Skype token expired, and no password specified")
                 self.getSkypeToken()
-        elif auth == self.Auth.RegToken:
-            if "reg" not in self.tokenExpiry or datetime.now() >= self.tokenExpiry["reg"]:
-                self.getRegToken()
 
     def skypeTokenClosure(self, method, *args, **kwargs):
         """
@@ -435,7 +475,6 @@ class SkypeConnection(SkypeObj):
             self.skypeTokenClosure(self.liveLogin, user, pwd)
         self.tokens["skype"], self.tokenExpiry["skype"] = SkypeLiveAuthProvider(self).auth(user, pwd)
         self.getUserId()
-        self.getRegToken()
 
     def soapLogin(self, user, pwd):
         """
@@ -462,7 +501,6 @@ class SkypeConnection(SkypeObj):
             self.skypeTokenClosure(self.soapLogin, user, pwd)
         self.tokens["skype"], self.tokenExpiry["skype"] = SkypeSOAPAuthProvider(self).auth(user, pwd)
         self.getUserId()
-        self.getRegToken()
 
     def guestLogin(self, url, name):
         """
@@ -481,7 +519,6 @@ class SkypeConnection(SkypeObj):
         """
         self.tokens["skype"], self.tokenExpiry["skype"] = SkypeGuestAuthProvider(self).auth(url, name)
         self.getUserId()
-        self.getRegToken()
 
     def getSkypeToken(self):
         """
@@ -501,7 +538,6 @@ class SkypeConnection(SkypeObj):
             .SkypeApiException: if the login form can't be processed
         """
         self.tokens["skype"], self.tokenExpiry["skype"] = SkypeRefreshAuthProvider(self).auth(self.tokens["skype"])
-        self.getRegToken()
 
     def getUserId(self):
         """
@@ -512,21 +548,12 @@ class SkypeConnection(SkypeObj):
 
     def getRegToken(self):
         """
-        Acquire a new registration token.
-
-        Once successful, all tokens and expiry times are written to the token file (if specified on initialisation).
+        Registration tokens are now obtained passively from server responses.
+        This method is kept for backward compatibility but no longer performs explicit requests.
         """
-        self.verifyToken(self.Auth.SkypeToken)
-        token, expiry, msgsHost, endpoint = SkypeRegistrationTokenProvider(self).auth(self.tokens["skype"])
-        self.tokens["reg"] = token
-        self.tokenExpiry["reg"] = expiry
-        self.msgsHost = msgsHost
-        if endpoint:
-            endpoint.config()
-            self.endpoints["main"] = endpoint
-        self.syncEndpoints()
-        if self.tokenFile:
-            self.writeToken()
+        # No-op: Registration tokens are now extracted from Set-RegistrationToken headers
+        # in all HTTP responses via _extractRegistrationToken()
+        pass
 
     def syncEndpoints(self):
         """
@@ -924,12 +951,16 @@ class SkypeRefreshAuthProvider(SkypeAuthProvider):
 
 class SkypeRegistrationTokenProvider(SkypeAuthProvider):
     """
-    An authentication provider that handles the handshake for a registration token.
+    DEPRECATED: This class is no longer used for active token requests.
+    Registration tokens are now obtained passively from Set-RegistrationToken headers.
+    
+    Kept for backward compatibility but should not be used directly.
     """
 
     def auth(self, skypeToken):
         """
-        Request a new registration token using a current Skype token.
+        DEPRECATED: This method is no longer used.
+        Registration tokens are now extracted automatically from server responses.
 
         Args:
             skypeToken (str): existing Skype token

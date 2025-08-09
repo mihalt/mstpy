@@ -36,7 +36,7 @@ class SkypeChat(SkypeObj):
             active = True
             try:
                 info = skype.conn("GET", "{0}/threads/{1}".format(skype.conn.msgsHost, raw.get("id")),
-                                  auth=SkypeConnection.Auth.RegToken,
+                                  auth=SkypeConnection.Auth.SkypeToken,
                                   params={"view": "msnp24Equivalent"}).json()
             except SkypeApiException as e:
                 if e.args[1].status_code in (400, 403, 404):
@@ -491,7 +491,7 @@ class SkypeChats(SkypeObjs):
                   "view": "supportsExtendedHistory|msnp24Equivalent",
                   "targetType": "Passport|Skype|Lync|Thread|Agent|ShortCircuit|PSTN|Flxt|NotificationStream|"
                                 "ModernBots|secureThreads|InviteFree"}
-        resp = self.skype.conn.syncStateCall("GET", url, params, auth=SkypeConnection.Auth.RegToken).json()
+        resp = self.skype.conn.syncStateCall("GET", url, params, auth=SkypeConnection.Auth.SkypeToken).json()
         chats = {}
         for json in resp.get("conversations", []):
             chat = SkypeChat.fromRaw(self.skype, json)

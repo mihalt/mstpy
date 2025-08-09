@@ -96,15 +96,10 @@ def registerMocks(regTokenRedirect=False, guest=False):
     # SOAP login: exchange edge token.
     responses.add(responses.POST, SkypeConnection.API_EDGE, status=200, content_type="application/json",
                   body=json.dumps({"skypetoken": Data.skypeToken, "expiresIn": 86400}))
-    # Request registration token.
+    # Registration tokens are now provided passively in response headers
     expiry = int(time.mktime((datetime.now() + timedelta(days=1)).timetuple()))
     msgsHost = Data.msgsHost if regTokenRedirect else SkypeConnection.API_MSGSHOST
-    if regTokenRedirect:
-        responses.add(responses.POST, "{0}/users/ME/endpoints".format(SkypeConnection.API_MSGSHOST), status=404,
-                      adding_headers={"Location": "{0}/users/ME/endpoints".format(Data.msgsHost)})
-    responses.add(responses.POST, "{0}/users/ME/endpoints".format(msgsHost), status=200,
-                  adding_headers={"Set-RegistrationToken": "registrationToken={0}; expires={1}; endpointId={{{2}}}"
-                                                           .format(Data.regToken, expiry, Data.endpointId)})
+    
     # Configure and retrieve endpoints.
     responses.add(responses.PUT, "{0}/users/ME/endpoints/%7B{1}%7D/presenceDocs/messagingService"
                                  .format(msgsHost, Data.endpointId), status=200)
@@ -118,6 +113,14 @@ def registerMocks(regTokenRedirect=False, guest=False):
     responses.add(responses.POST, "{0}/api/v2/conversation/".format(SkypeConnection.API_JOIN),
                   status=200, content_type="application/json",
                   json={"Long": Data.chatLongId, "Resource": Data.chatThreadId})
+    # Guest auth: get meeting information.
+    responses.add(responses.GET, "{0}/meetings/{1}".format(SkypeConnection.API_JOIN_CREATE, Data.chatShortId),
+                  status=200, content_type="application/json",
+                  json={"threadId": Data.chatThreadId})
+    # Guest auth: join the conversation.
+    responses.add(responses.POST, "{0}/threads/{1}/members".format(SkypeConnection.API_JOIN_CREATE, Data.chatThreadId),
+                  status=200, content_type="application/json",
+                  json={"skypetoken": Data.skypeToken})
     # Join a conversation as a guest.
     responses.add(responses.POST, "{0}/api/v1/users/guests".format(SkypeConnection.API_JOIN),
                   status=200, content_type="application/json", json={"skypetoken": Data.skypeToken})
@@ -154,6 +157,8 @@ def registerMocks(regTokenRedirect=False, guest=False):
     chatFmt = (SkypeConnection.API_MSGSHOST, Data.chatThreadId)
     responses.add(responses.GET, "{0}/users/ME/conversations".format(SkypeConnection.API_MSGSHOST),
                   status=200, content_type="application/json",
+                  adding_headers={"Set-RegistrationToken": "registrationToken={0}; expires={1}"
+                                                           .format(Data.regToken, expiry)},
                   json={"conversations": [{"id": "8:{0}".format(Data.contactId),
                                            "lastMessage": {"clientmessageid": Data.msgId,
                                                            "composetime": Data.msgTimeFmt,
@@ -295,7 +300,6 @@ def mockSkype():
     sk = Skype()
     sk.conn.userId = Data.userId
     sk.conn.tokens["skype"] = Data.skypeToken
-    sk.conn.tokens["reg"] = "registrationToken={0}".format(Data.skypeToken)
     sk.conn.tokenExpiry["skype"] = sk.conn.tokenExpiry["reg"] = Data.tokenExpiry
     return sk
 
@@ -318,13 +322,10 @@ class SkypeClientTest(unittest.TestCase):
         registerMocks()
         # Do the authentication.
         sk = Skype("fred.2", "password")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
         # Messenger host should be the default.
         self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
         # Connected as our user, not a guest.
         self.assertTrue(sk.conn.connected)
         self.assertFalse(sk.conn.guest)
@@ -338,13 +339,10 @@ class SkypeClientTest(unittest.TestCase):
         registerMocks(regTokenRedirect=True)
         # Do the authentication.
         sk = Skype("fred.2", "password")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
-        # Messenger host should be the alternative domain.
-        self.assertEqual(sk.conn.msgsHost, Data.msgsHost)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
+        # Messenger host should be the default (redirect handling changed).
+        self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
         # Connected as our user, not a guest.
         self.assertTrue(sk.conn.connected)
         self.assertFalse(sk.conn.guest)
@@ -361,13 +359,10 @@ class SkypeClientTest(unittest.TestCase):
         self.assertFalse(sk.conn.connected)
         # Do the authentication.
         sk.conn.guestLogin(Data.chatShortId, "Name")
-        # Tokens should be set.
+        # Skype token should be set.
         self.assertEqual(sk.conn.tokens["skype"], Data.skypeToken)
-        self.assertEqual(sk.conn.tokens["reg"], "registrationToken={0}".format(Data.regToken))
         # Messenger host should be the default.
         self.assertEqual(sk.conn.msgsHost, SkypeConnection.API_MSGSHOST)
-        # Main endpoint should exist.
-        self.assertEqual(sk.conn.endpoints["main"].id, "{{{0}}}".format(Data.endpointId))
         # Connected as a guest user.
         self.assertTrue(sk.conn.connected)
         self.assertTrue(sk.conn.guest)
@@ -484,6 +479,43 @@ class SkypeClientTest(unittest.TestCase):
         self.assertEqual(SkypeUtils.chatToId("{0}/conversations/{1}".format(Data.msgsHost, Data.chatP2PThreadId)),
                          Data.chatP2PThreadId)
 
+    @responses.activate
+    def testPassiveRegistrationTokenExtraction(self):
+        """
+        Test that registration tokens are extracted from Set-RegistrationToken headers in any response.
+        """
+        sk = mockSkype()
+        # Clear existing registration token
+        sk.conn.tokens.pop("reg", None)
+        sk.conn.tokenExpiry.pop("reg", None)
+        
+        # Make a request that should extract the token
+        sk.chats.recent()
+        
+        # Verify token was extracted
+        self.assertEqual(sk.conn.tokens["reg"], Data.regToken)
+        self.assertTrue("reg" in sk.conn.tokenExpiry)
+
+    @responses.activate
+    def testRequiredHeaders(self):
+        """
+        Test that required ms-ic3 headers are included in all requests.
+        """
+        sk = mockSkype()
+        
+        # Intercept the actual request to verify headers
+        def request_callback(request):
+            headers = request.headers
+            self.assertIn('ms-ic3-additional-product', headers)
+            self.assertEqual(headers['ms-ic3-additional-product'], 'Sfl')
+            self.assertIn('ms-ic3-product', headers)
+            self.assertEqual(headers['ms-ic3-product'], 'tfl')
+            return (200, {}, json.dumps({"conversations": []}))
+        
+        responses.add_callback(responses.GET, "{0}/users/ME/conversations".format(SkypeConnection.API_MSGSHOST),
+                              callback=request_callback, content_type="application/json")
+        
+        sk.chats.recent()
 
 if __name__ == "__main__":
     unittest.main()
