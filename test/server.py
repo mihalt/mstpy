@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+from pathlib import Path
 import unittest
 from getpass import getpass
 
@@ -27,7 +28,7 @@ class SkypeServerTestBase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.sk = Skype(tokenFile=env["tokens"] or ".tokens")
+        cls.sk = Skype(tokenFile=env["tokens"] or Path(__file__).parent.parent / ".tokens")
         if not cls.sk.conn.connected:
             raise RuntimeError("Token file is invalid")
         cls.recip = env["recip"]
